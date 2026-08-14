@@ -44,7 +44,10 @@ struct ContentView: View {
         }
         .padding(theme.win95 ? 12 : 22)
         .frame(width: 480)
-        .background(theme.bg)
+        .background {
+            theme.bg
+            if !theme.win95 { GraphGrid(line: theme.surfaceBorder.opacity(0.45)) }
+        }
         .preferredColorScheme(theme.dark ? .dark : .light)
         .tint(theme.accent)
     }
@@ -92,13 +95,17 @@ struct ContentView: View {
         .padding(.trailing, 8)
     }
 
-    private var pad: some View {
-        HStack(spacing: 16) {
-            ForEach(0..<2) { i in
-                Keycap(legend: specs[i].legend, index: i,
-                       isSelected: selected == i, theme: theme)
-                    .onTapGesture { selected = i }
+    @ViewBuilder private var pad: some View {
+        if theme.win95 {
+            HStack(spacing: 16) {
+                ForEach(0..<2) { i in
+                    Keycap(legend: specs[i].legend, index: i,
+                           isSelected: selected == i, theme: theme)
+                        .onTapGesture { selected = i }
+                }
             }
+        } else {
+            NanoPad(specs: specs, selected: $selected, theme: theme)
         }
     }
 
@@ -168,11 +175,18 @@ struct Keycap: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            capBody
-                .frame(width: 150, height: 110)
-                .shadow(color: !theme.win95 && isSelected
-                        ? theme.accent.opacity(0.35) : .clear, radius: 14)
-                .animation(.easeOut(duration: 0.15), value: isSelected)
+            ZStack {
+                theme.capTop
+                Text(legend)
+                    .font(.system(size: legend.count > 5 ? 15 : 24,
+                                  weight: .bold, design: .monospaced))
+                    .foregroundStyle(isSelected ? theme.accent : theme.capText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .padding(.horizontal, 10)
+            }
+            .modifier(Bevel(raised: !isSelected, width: 3))
+            .frame(width: 150, height: 110)
 
             Text("KEY \(index + 1)")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -180,34 +194,6 @@ struct Keycap: View {
                 .foregroundStyle(isSelected ? theme.accent : theme.dim)
         }
         .contentShape(Rectangle())
-    }
-
-    @ViewBuilder private var capBody: some View {
-        let label = Text(legend)
-            .font(.system(size: legend.count > 5 ? 15 : 24,
-                          weight: .bold, design: .monospaced))
-            .foregroundStyle(isSelected ? theme.accent : theme.capText)
-            .lineLimit(1)
-            .minimumScaleFactor(0.5)
-            .padding(.horizontal, 10)
-
-        if theme.win95 {
-            ZStack {
-                theme.capTop
-                label
-            }
-            .modifier(Bevel(raised: !isSelected, width: 3))
-        } else {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(LinearGradient(colors: [theme.capTop, theme.capBottom],
-                                         startPoint: .top, endPoint: .bottom))
-                RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(isSelected ? theme.accent : theme.surfaceBorder,
-                                  lineWidth: isSelected ? 2 : 1)
-                label
-            }
-        }
     }
 }
 
