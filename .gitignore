@@ -1,0 +1,5 @@
+firmware/keypad.bin
+firmware/*.ihx
+.venv/
+.build/
+.DS_Store
