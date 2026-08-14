@@ -131,7 +131,7 @@ struct DimensionLine: View {
                 .rotationEffect(vertical ? .degrees(90) : .zero)
                 .fixedSize()
                 .padding(vertical ? .vertical : .horizontal, 3)
-                .background(theme.surface)
+                .background(theme.bg)
         }
     }
 
