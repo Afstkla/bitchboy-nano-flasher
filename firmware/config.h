@@ -11,6 +11,26 @@
 
 #define KEY_DEBOUNCE_MS 12      // lockout after an edge, in milliseconds
 
+// Per-key RGB LEDs, common anode, discovered by sweeping every pin pair - the red die
+// is not wired to anything on this board, so green and blue are all there is. None of
+// these share a pin with a switch, so the LEDs need no multiplexing against key scans.
+#define KEY1_LED_ANODE  P17
+#define KEY1_LED_GREEN  P30
+#define KEY1_LED_BLUE   P31
+
+#define KEY2_LED_ANODE  P11
+#define KEY2_LED_GREEN  P34
+#define KEY2_LED_BLUE   P33
+
+// Global ceiling on LED duty, 0..255. The board's series resistors are unknown, so
+// this is the knob to back off if the LEDs ever run hot or too bright.
+#define LED_BRIGHTNESS  255
+
+#define LED_MODE_OFF      0
+#define LED_MODE_SOLID    1
+#define LED_MODE_BREATHE  2
+#define LED_MODE_CYCLE    3
+
 // USB device descriptor. 0x1209/0x0001 is the pid.codes "interim / private
 // testing" ID - fine for a personal one-off.
 #define USB_VENDOR_ID       0x1209
