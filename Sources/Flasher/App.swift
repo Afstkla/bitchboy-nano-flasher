@@ -25,7 +25,8 @@ struct FlasherApp: App {
 }
 
 struct ContentView: View {
-    @State private var specs = [KeySpec(), KeySpec(keyLabel: "b")]
+    @State private var specs = loadSpecs(from: specsFile)
+        ?? [KeySpec(), KeySpec(keyLabel: "b")]
     @State private var selected = 0
     @StateObject private var runner = Runner()
     @AppStorage("theme") private var themeName = "NANO"
@@ -39,6 +40,7 @@ struct ContentView: View {
             header
             pad
             ConfigPanel(spec: $specs[selected], theme: theme)
+            LedPanel(led: $specs[selected].led, theme: theme)
             flashButton
             console
         }
@@ -270,6 +272,88 @@ struct ConfigPanel: View {
         }
         .buttonStyle(.plain)
         .help("Record a combo from your keyboard")
+    }
+}
+
+struct LedPanel: View {
+    @Binding var led: LedSpec
+    let theme: Theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("LED")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.dim)
+                Spacer()
+                swatch
+            }
+
+            Segment(options: LedMode.allCases.map(\.label),
+                    index: Binding(
+                        get: { LedMode.allCases.firstIndex(of: led.mode) ?? 0 },
+                        set: { led.mode = LedMode.allCases[$0] }),
+                    theme: theme)
+
+            if led.mode.usesColour {
+                channel("Green", $led.green)
+                channel("Blue", $led.blue)
+            }
+
+            if led.mode.usesPeriod {
+                HStack(spacing: 8) {
+                    Text("Speed")
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.dim)
+                        .frame(width: 42, alignment: .leading)
+                    Slider(value: $led.periodMs, in: 200...5000, step: 100)
+                    Text("\(Int(led.periodMs)) ms")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(theme.dim)
+                        .frame(width: 56, alignment: .trailing)
+                }
+            }
+
+            Toggle(isOn: $led.lightWhilePressed) {
+                Text("Light while pressed")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.fieldText)
+            }
+            .toggleStyle(.checkbox)
+
+            if led.lightWhilePressed {
+                channel("Green", $led.pressGreen)
+                channel("Blue", $led.pressBlue)
+            }
+
+            Text("These pads wire only green and blue — there is no red channel")
+                .font(.system(size: 10))
+                .foregroundStyle(theme.dim)
+        }
+        .padding(14)
+        .panelStyle(theme)
+    }
+
+    private func channel(_ name: String, _ value: Binding<Double>) -> some View {
+        HStack(spacing: 8) {
+            Text(name)
+                .font(.system(size: 10))
+                .foregroundStyle(theme.dim)
+                .frame(width: 42, alignment: .leading)
+            Slider(value: value, in: 0...1)
+            Text("\(Int(value.wrappedValue * 100))%")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(theme.dim)
+                .frame(width: 56, alignment: .trailing)
+        }
+    }
+
+    private var swatch: some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(Color(red: 0, green: led.green, blue: led.blue))
+            .frame(width: 34, height: 14)
+            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(theme.surfaceBorder))
+            .opacity(led.mode == .off ? 0.25 : 1)
     }
 }
 

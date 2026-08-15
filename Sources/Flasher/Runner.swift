@@ -5,6 +5,7 @@ let repoRoot = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()   // Sources/
     .deletingLastPathComponent()   // repo root
 let firmwareDir = repoRoot.appendingPathComponent("firmware")
+let specsFile = firmwareDir.appendingPathComponent("keymap.json")
 
 final class Runner: ObservableObject {
     @Published var log = ""
@@ -28,6 +29,7 @@ final class Runner: ObservableObject {
             do {
                 try keymap.write(to: firmwareDir.appendingPathComponent("keymap.h"),
                                  atomically: true, encoding: .utf8)
+                try saveSpecs([spec1, spec2], to: specsFile)
                 append("Wrote firmware/keymap.h, compiling ...\n")
                 try run(["make", "-C", firmwareDir.path, "bin"],
                         hint: "make/sdcc not found - run: brew install sdcc")

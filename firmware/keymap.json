@@ -1,0 +1,42 @@
+[
+  {
+    "keyLabel" : "a",
+    "led" : {
+      "blue" : 1,
+      "green" : 0,
+      "lightWhilePressed" : true,
+      "mode" : "cycle",
+      "periodMs" : 2500,
+      "pressBlue" : 1,
+      "pressGreen" : 1
+    },
+    "mode" : "text",
+    "mods" : [
+      false,
+      false,
+      false,
+      false
+    ],
+    "text" : "claude\n"
+  },
+  {
+    "keyLabel" : "4",
+    "led" : {
+      "blue" : 1,
+      "green" : 0,
+      "lightWhilePressed" : true,
+      "mode" : "breathe",
+      "periodMs" : 1800,
+      "pressBlue" : 0,
+      "pressGreen" : 1
+    },
+    "mode" : "key",
+    "mods" : [
+      true,
+      false,
+      true,
+      true
+    ],
+    "text" : ""
+  }
+]

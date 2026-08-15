@@ -31,6 +31,26 @@ The flasher polls for the bootloader (`4348:55e0`) and flashes the instant it ap
   Hit the ⏺ record button and press the combo on your keyboard instead of picking it.
 - **Text sequence** — typed once per press; newlines are sent as Enter. ASCII only
   (smart quotes and friends are folded back to ASCII automatically).
+- **LED** — per key: off, solid, breathe or cycle, with a speed and an optional
+  separate colour while the key is held.
+
+## The LEDs
+
+Each key has an RGB die, but only two of its channels are wired. Found by sweeping
+every pin against every other pin, and every pin against both rails:
+
+| | anode | green | blue | red |
+|---|---|---|---|---|
+| Key 1 (left, `P3.2`) | `P1.7` | `P3.0` | `P3.1` | not reachable |
+| Key 2 (right, `P1.4`) | `P1.1` | `P3.4` | `P3.3` | not reachable |
+
+Both cathodes low at once gives cyan, so it's four states per key. None of these
+share a pin with a switch, so the LEDs need no multiplexing against key scanning.
+
+Red never lit in any configuration: all 90 ordered pin pairs, both rail directions on
+all ten GPIOs, on two units, at full brightness in the dark. Listing photos do show
+red, so it is presumably fitted on a backlit variant of the same PCB. `LED_BRIGHTNESS`
+in `firmware/config.h` caps the duty cycle — the board's series resistors are unknown.
 
 Two themes, switchable in the title bar: **NANO** (paper & signal orange, after
 [bitchboynano.afstkla.nl](https://bitchboynano.afstkla.nl)) and **95** (Windows 95
