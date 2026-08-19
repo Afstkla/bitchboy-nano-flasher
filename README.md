@@ -31,6 +31,10 @@ The flasher polls for the bootloader (`4348:55e0`) and flashes the instant it ap
   Hit the ⏺ record button and press the combo on your keyboard instead of picking it.
 - **Text sequence** — typed once per press; newlines are sent as Enter. ASCII only
   (smart quotes and friends are folded back to ASCII automatically).
+- **Macro** — a list of steps run once per press: combos, typed text, and waits in
+  milliseconds. Hit ⏺ and just perform it — plain typing collects into one text step,
+  anything with a modifier becomes a combo step, and any pause over 0.4s becomes a
+  wait. Steps stay editable afterwards. The LEDs hold still while a macro runs.
 - **LED** — per key: off, solid, breathe or cycle, with a speed and an optional
   separate colour while the key is held.
 

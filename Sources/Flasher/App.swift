@@ -206,13 +206,15 @@ struct ConfigPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Segment(options: ["Key combo", "Type text"],
+            Segment(options: KeySpecMode.allCases.map(\.label),
                     index: Binding(
-                        get: { spec.mode == .key ? 0 : 1 },
-                        set: { spec.mode = $0 == 0 ? .key : .text }),
+                        get: { KeySpecMode.allCases.firstIndex(of: spec.mode) ?? 0 },
+                        set: { spec.mode = KeySpecMode.allCases[$0] }),
                     theme: theme)
 
-            if spec.mode == .key {
+            if spec.mode == .macro {
+                macroEditor
+            } else if spec.mode == .key {
                 HStack(spacing: 8) {
                     ForEach(modifiers.indices, id: \.self) { i in
                         ModifierToggle(symbol: modifiers[i].symbol,
@@ -222,7 +224,7 @@ struct ConfigPanel: View {
                     }
                     recordButton
                     Spacer()
-                    KeyDropdown(selection: $spec.keyLabel, theme: theme)
+                    Dropdown(options: keyOptions.map(\.label), selection: $spec.keyLabel, theme: theme)
                 }
                 Text(hint)
                     .font(.system(size: 10))
@@ -234,12 +236,7 @@ struct ConfigPanel: View {
                     .scrollContentBackground(.hidden)
                     .padding(6)
                     .frame(height: 64)
-                    .background(theme.win95
-                                ? AnyView(theme.fieldBg.modifier(Bevel(raised: false)))
-                                : AnyView(RoundedRectangle(cornerRadius: theme.radius - 2)
-                                    .fill(theme.fieldBg)
-                                    .overlay(RoundedRectangle(cornerRadius: theme.radius - 2)
-                                        .strokeBorder(theme.surfaceBorder))))
+                    .fieldBackground(theme)
                 Text("Typed once per press · newline is sent as Enter · ASCII only")
                     .font(.system(size: 10))
                     .foregroundStyle(theme.dim)
@@ -248,6 +245,37 @@ struct ConfigPanel: View {
         .padding(14)
         .panelStyle(theme)
         .onDisappear { recorder.stop() }
+    }
+
+    // ponytail: no scroll view and move-up only - a macro long enough to want either
+    // wants a different editor altogether.
+    private var macroEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(spec.steps.indices, id: \.self) { i in
+                StepRow(step: $spec.steps[i], theme: theme,
+                        moveUp: i == 0 ? nil : { spec.steps.swapAt(i, i - 1) },
+                        remove: { spec.steps.remove(at: i) })
+            }
+            HStack(spacing: 6) {
+                ForEach(StepKind.allCases, id: \.self) { kind in
+                    Button("+ " + kind.label) { spec.steps.append(MacroStep(kind: kind)) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(togglesBackground(active: false, theme: theme))
+                        .foregroundStyle(theme.dim)
+                }
+                Spacer()
+                recordButton
+            }
+            .padding(.top, 2)
+            Text(recorder.recording
+                 ? "Recording — type the macro here; pauses over 0.4s become Wait steps"
+                 : "Runs once per press · the LEDs hold still while it runs")
+                .font(.system(size: 10))
+                .foregroundStyle(recorder.recording ? theme.accent : theme.dim)
+        }
     }
 
     private var hint: String {
@@ -259,9 +287,15 @@ struct ConfigPanel: View {
 
     private var recordButton: some View {
         Button {
-            recorder.recording ? recorder.stop() : recorder.start { mods, label in
-                spec.mods = mods
-                spec.keyLabel = label
+            if recorder.recording {
+                recorder.stop()
+            } else if spec.mode == .macro {
+                recorder.startMacro { spec.steps.append($0) }
+            } else {
+                recorder.start { mods, label in
+                    spec.mods = mods
+                    spec.keyLabel = label
+                }
             }
         } label: {
             Image(systemName: recorder.recording ? "stop.fill" : "record.circle")
@@ -271,7 +305,7 @@ struct ConfigPanel: View {
                 .foregroundStyle(recorder.recording ? theme.accent : theme.dim)
         }
         .buttonStyle(.plain)
-        .help("Record a combo from your keyboard")
+        .help("Record from your keyboard")
     }
 }
 
@@ -357,14 +391,16 @@ struct LedPanel: View {
     }
 }
 
-struct KeyDropdown: View {
+struct Dropdown: View {
+    let options: [String]
     @Binding var selection: String
     let theme: Theme
+    var width: CGFloat = 140
 
     var body: some View {
         Menu {
-            ForEach(keyOptions, id: \.label) { opt in
-                Button(opt.label) { selection = opt.label }
+            ForEach(options, id: \.self) { opt in
+                Button(opt) { selection = opt }
             }
         } label: {
             HStack(spacing: 0) {
@@ -372,6 +408,7 @@ struct KeyDropdown: View {
                     .font(.system(size: 12, design: theme.win95 ? .monospaced : .default))
                     .foregroundStyle(theme.fieldText)
                     .padding(.leading, 8)
+                    .lineLimit(1)
                 Spacer()
                 if theme.win95 {
                     Text("▼")
@@ -388,17 +425,78 @@ struct KeyDropdown: View {
                         .padding(.trailing, 8)
                 }
             }
-            .frame(width: 140, height: 26)
-            .background(theme.win95
-                        ? AnyView(theme.fieldBg.modifier(Bevel(raised: false)))
-                        : AnyView(RoundedRectangle(cornerRadius: theme.radius - 2)
-                            .fill(theme.fieldBg)
-                            .overlay(RoundedRectangle(cornerRadius: theme.radius - 2)
-                                .strokeBorder(theme.surfaceBorder))))
+            .frame(width: width, height: 26)
+            .fieldBackground(theme)
         }
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
     }
+}
+
+struct StepRow: View {
+    @Binding var step: MacroStep
+    let theme: Theme
+    let moveUp: (() -> Void)?
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Dropdown(options: StepKind.allCases.map(\.label),
+                     selection: Binding(
+                        get: { step.kind.label },
+                        set: { label in
+                            step.kind = StepKind.allCases.first { $0.label == label } ?? .tap
+                        }),
+                     theme: theme, width: 78)
+
+            switch step.kind {
+            case .tap:
+                ForEach(modifiers.indices, id: \.self) { i in
+                    ModifierToggle(symbol: modifiers[i].symbol, isOn: $step.mods[i],
+                                   disabled: keyOption(step.keyLabel).kind == .con,
+                                   theme: theme, size: CGSize(width: 28, height: 26))
+                }
+                Dropdown(options: keyOptions.map(\.label), selection: $step.keyLabel,
+                         theme: theme, width: 112)
+            case .text:
+                TextEditor(text: $step.text)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.fieldText)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+                    .frame(height: 40)
+                    .fieldBackground(theme)
+            case .wait:
+                TextField("", value: $step.waitMs, format: .number)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(theme.fieldText)
+                    .padding(.horizontal, 6)
+                    .frame(width: 64, height: 26)
+                    .fieldBackground(theme)
+                Text("ms")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.dim)
+            }
+
+            Spacer(minLength: 0)
+            iconButton("chevron.up", theme: theme, action: moveUp)
+            iconButton("xmark", theme: theme, action: remove)
+        }
+    }
+}
+
+func iconButton(_ symbol: String, theme: Theme, action: (() -> Void)?) -> some View {
+    Button { action?() } label: {
+        Image(systemName: symbol)
+            .font(.system(size: 10, weight: .semibold))
+            .frame(width: 24, height: 26)
+            .background(togglesBackground(active: false, theme: theme))
+            .foregroundStyle(theme.dim)
+    }
+    .buttonStyle(.plain)
+    .disabled(action == nil)
+    .opacity(action == nil ? 0.3 : 1)
 }
 
 struct Segment: View {
@@ -449,17 +547,29 @@ struct ModifierToggle: View {
     @Binding var isOn: Bool
     let disabled: Bool
     let theme: Theme
+    var size = CGSize(width: 34, height: 30)
 
     var body: some View {
         Button { isOn.toggle() } label: {
             Text(symbol)
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 34, height: 30)
+                .font(.system(size: size.height > 28 ? 15 : 13, weight: .semibold))
+                .frame(width: size.width, height: size.height)
                 .background(togglesBackground(active: isOn && !disabled, theme: theme))
                 .foregroundStyle(isOn && !disabled ? theme.accent : theme.dim)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.35 : 1)
+    }
+}
+
+extension View {
+    func fieldBackground(_ theme: Theme) -> some View {
+        background(theme.win95
+                   ? AnyView(theme.fieldBg.modifier(Bevel(raised: false)))
+                   : AnyView(RoundedRectangle(cornerRadius: theme.radius - 2)
+                       .fill(theme.fieldBg)
+                       .overlay(RoundedRectangle(cornerRadius: theme.radius - 2)
+                           .strokeBorder(theme.surfaceBorder))))
     }
 }

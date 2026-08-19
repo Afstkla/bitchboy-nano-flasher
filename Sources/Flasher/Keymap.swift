@@ -97,7 +97,37 @@ func level(_ fraction: Double) -> Int {
     Int((min(max(fraction, 0), 1) * 255).rounded())
 }
 
-enum KeySpecMode: String, Codable { case key, text }
+enum KeySpecMode: String, Codable, CaseIterable {
+    case key, text, macro
+
+    var label: String {
+        switch self {
+        case .key: return "Key combo"
+        case .text: return "Type text"
+        case .macro: return "Macro"
+        }
+    }
+}
+
+enum StepKind: String, Codable, CaseIterable {
+    case tap, text, wait
+
+    var label: String {
+        switch self {
+        case .tap: return "Combo"
+        case .text: return "Text"
+        case .wait: return "Wait"
+        }
+    }
+}
+
+struct MacroStep: Codable {
+    var kind: StepKind = .tap
+    var mods: [Bool] = [false, false, false, false]
+    var keyLabel: String = "a"
+    var text: String = ""
+    var waitMs: Double = 100
+}
 
 struct KeySpec: Codable {
     var mode: KeySpecMode = .key
@@ -106,7 +136,16 @@ struct KeySpec: Codable {
     var text: String = ""
     var led = LedSpec()
 
+    // Absent from keymap.json files written before macros existed, and a synthesised
+    // decoder rejects a missing key even when the property has a default.
+    var macroSteps: [MacroStep]?
+    var steps: [MacroStep] {
+        get { macroSteps ?? [] }
+        set { macroSteps = newValue }
+    }
+
     var legend: String {
+        if mode == .macro { return "▶\(steps.count)" }
         if mode == .text {
             let flat = text.replacingOccurrences(of: "\n", with: "⏎")
             if flat.isEmpty { return "…" }
@@ -149,7 +188,32 @@ func cString(_ text: String) throws -> String {
     return out + "\""
 }
 
+func stepCode(_ step: MacroStep) throws -> String {
+    switch step.kind {
+    case .wait:
+        return "DLY_ms(\(Int(step.waitMs)));"
+    case .text:
+        return "KBD_print(\(try cString(step.text)));"
+    case .tap:
+        let opt = keyOption(step.keyLabel)
+        if opt.kind == .con { return "CON_type(\(opt.expr));" }
+        let mods = zip(modifiers, step.mods).filter { $0.1 }.map { $0.0.expr }
+        return mods.map { "KBD_press(\($0)); " }.joined()
+            + "KBD_type(\(opt.expr));"
+            + mods.reversed().map { " KBD_release(\($0));" }.joined()
+    }
+}
+
 func macros(_ n: Int, _ spec: KeySpec) throws -> String {
+    if spec.mode == .macro {
+        let body = try spec.steps.map { "  " + (try stepCode($0)) + " \\\n" }.joined()
+        return """
+        #define KEY\(n)_PRESSED()  { \\
+        \(body)}
+        #define KEY\(n)_RELEASED() { }
+
+        """
+    }
     if spec.mode == .text {
         let literal = try cString(spec.text)
         return """
@@ -231,6 +295,23 @@ func runCheck() throws {
     assert(try! cString("Hi, I\u{2019}m \u{201C}Nano\u{201D} \u{2014} ok\u{2026}")
         == "\"Hi, I'm \\\"Nano\\\" - ok...\"")
 
+    var mac = KeySpec(mode: .macro)
+    mac.steps = [
+        MacroStep(kind: .tap, mods: [false, false, false, true], keyLabel: "Space"),
+        MacroStep(kind: .wait, waitMs: 100),
+        MacroStep(kind: .text, text: "terminal\n"),
+        MacroStep(kind: .wait, waitMs: 250),
+        MacroStep(kind: .tap, keyLabel: "Volume Up"),
+    ]
+    let macro = try macros(1, mac)
+    assert(macro.contains("KBD_press(KBD_KEY_LEFT_GUI); KBD_type(' '); KBD_release(KBD_KEY_LEFT_GUI); \\\n"))
+    assert(macro.contains("  DLY_ms(100); \\\n"))
+    assert(macro.contains("  KBD_print(\"terminal\\n\"); \\\n"))
+    assert(macro.contains("  CON_type(CON_VOL_UP); \\\n"))
+    assert(macro.contains("#define KEY1_RELEASED() { }"))
+    assert(mac.legend == "▶5")
+    assert(try! macros(2, KeySpec(mode: .macro)).contains("#define KEY2_PRESSED()  { \\\n}"))
+
     var media = KeySpec()
     media.keyLabel = "Volume Up"
     assert(try! macros(1, media).contains("CON_press(CON_VOL_UP)"))
@@ -254,6 +335,19 @@ func runCheck() throws {
     let back = loadSpecs(from: roundTrip)
     assert(back?[0].keyLabel == "F13" && back?[0].mods == [true, false, false, true])
     assert(back?[1].led.mode == .breathe && back?[1].led.periodMs == 1500)
+    try saveSpecs([mac, s2], to: roundTrip)
+    assert(loadSpecs(from: roundTrip)?[0].steps.count == 5)
+    assert(try! keymapFile(loadSpecs(from: roundTrip)![0], s2) == (try! keymapFile(mac, s2)))
+    // A keymap.json written before macros existed still loads.
+    try Data("""
+    [{"keyLabel":"a","mode":"key","mods":[false,false,false,false],"text":"",
+      "led":{"blue":1,"green":0,"lightWhilePressed":true,"mode":"off","periodMs":2000,
+             "pressBlue":1,"pressGreen":1}},
+     {"keyLabel":"b","mode":"key","mods":[false,false,false,false],"text":"",
+      "led":{"blue":1,"green":0,"lightWhilePressed":true,"mode":"off","periodMs":2000,
+             "pressBlue":1,"pressGreen":1}}]
+    """.utf8).write(to: roundTrip)
+    assert(loadSpecs(from: roundTrip)?[1].keyLabel == "b")
     assert(try! keymapFile(back![0], back![1]) == (try! keymapFile(s1, lit)))
     try? FileManager.default.removeItem(at: roundTrip)
     assert(loadSpecs(from: URL(fileURLWithPath: "/nonexistent/x.json")) == nil)
