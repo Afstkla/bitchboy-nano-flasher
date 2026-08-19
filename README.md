@@ -3,7 +3,7 @@
 GUI flasher that turns a cheap CH552G 2-key macropad (the "曾大大" pads from
 [2button-pad-hack](https://github.com/chrisssstos/2button-pad-hack)) into a plain USB
 HID keyboard. Pick what each button sends — a key, a modifier combo, a media key, or a
-whole typed text sequence — and flash it, no MIDI involved.
+whole macro of combos, typed text and waits — and flash it, no MIDI involved.
 
 > **One-way:** the WCH bootloader cannot read flash, so the stock firmware cannot be
 > backed up. The chip is unbrickable though — its bootloader is in mask ROM.
@@ -11,11 +11,10 @@ whole typed text sequence — and flash it, no MIDI involved.
 ## Use
 
 ```sh
-brew install sdcc libusb
 swift run
 ```
 
-Configure both buttons, hit **Build & Flash**, then put the pad in bootloader mode:
+Configure both buttons, hit **Flash**, then put the pad in bootloader mode:
 
 - **Already running this firmware?** Unplug, hold both buttons, plug back in.
 - **Stock (or MIDI) firmware?** Bridge pin 12 (UDP) to pin 16 (V33) through a 10k
@@ -23,6 +22,9 @@ Configure both buttons, hit **Build & Flash**, then put the pad in bootloader mo
   [2button-pad-hack README](https://github.com/chrisssstos/2button-pad-hack#getting-into-the-bootloader).
 
 The flasher polls for the bootloader (`4348:55e0`) and flashes the instant it appears.
+It talks to the chip over IOKit and patches the keymap into a precompiled image, so it
+needs nothing installed — no compiler, no Python, no libusb. `brew install sdcc` is only
+needed to rebuild `firmware/keypad.bin` after changing the firmware itself.
 
 ## What the buttons can do
 
@@ -37,6 +39,36 @@ The flasher polls for the bootloader (`4348:55e0`) and flashes the instant it ap
   wait. Steps stay editable afterwards. The LEDs hold still while a macro runs.
 - **LED** — per key: off, solid, breathe or cycle, with a speed and an optional
   separate colour while the key is held.
+
+## Handing it to someone else
+
+`./make-app.sh` builds a universal **BitchBoy Nano.app**, signs it with the Developer ID
+cert, notarizes it and staples the ticket, leaving `build/BitchBoyNano.zip` to send. The
+app is self-contained: whoever you send it to just opens it. Notarizing needs credentials
+in the keychain once:
+
+```sh
+xcrun notarytool store-credentials bitchboy \
+  --key ~/.appstoreconnect/private_keys/AuthKey_<key-id>.p8 \
+  --key-id <key-id> --issuer <issuer-uuid>
+```
+
+The issuer UUID is on App Store Connect under Users and Access → Integrations. An
+Apple ID plus `--password <app-specific-password>` works too, but an API key is
+revocable on its own and does not hand a tool your Apple ID.
+
+`./make-app.sh --no-notarize` skips that for local testing.
+
+## How a keymap gets onto the pad
+
+The firmware reads what each key does out of a 512-byte blob in its own flash, rather
+than having it compiled in. `firmware/keypad.bin` is committed with that blob empty but
+marked by the magic `BBNKMAP`; flashing means finding the marker, splicing in the encoded
+keymap, and writing the result. The layout is documented at the top of `firmware/keypad.c`
+and encoded in `Keymap.swift` — `swift run Flasher --check` asserts the two agree.
+
+Change the firmware itself and you need `brew install sdcc`, then `make -C firmware bin`,
+and commit the new `keypad.bin`.
 
 ## The LEDs
 

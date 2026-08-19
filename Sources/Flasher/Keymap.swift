@@ -5,51 +5,60 @@ enum KeyKind { case kbd, con }
 struct KeyOption: Hashable {
     let label: String
     let kind: KeyKind
-    let expr: String
+    let code: UInt16
     let legend: String
 }
 
 struct Modifier {
     let symbol: String
     let name: String
-    let expr: String
 }
 
+// Order is the bit order of the mods mask in the keymap blob, and matches MOD_KEYS
+// in keypad.c.
 let modifiers: [Modifier] = [
-    Modifier(symbol: "⌃", name: "control", expr: "KBD_KEY_LEFT_CTRL"),
-    Modifier(symbol: "⌥", name: "option", expr: "KBD_KEY_LEFT_ALT"),
-    Modifier(symbol: "⇧", name: "shift", expr: "KBD_KEY_LEFT_SHIFT"),
-    Modifier(symbol: "⌘", name: "command", expr: "KBD_KEY_LEFT_GUI"),
+    Modifier(symbol: "⌃", name: "control"),
+    Modifier(symbol: "⌥", name: "option"),
+    Modifier(symbol: "⇧", name: "shift"),
+    Modifier(symbol: "⌘", name: "command"),
 ]
 
+func modMask(_ mods: [Bool]) -> UInt8 {
+    mods.enumerated().reduce(0) { $1.element ? $0 | UInt8(1 << $1.offset) : $0 }
+}
+
+// Keycodes as usb_conkbd.h defines them: printable ASCII passes through, everything
+// else has a code above 0x7f that KBD_press maps to a HID usage.
 let keyOptions: [KeyOption] = {
     var opts: [KeyOption] = []
     for ch in "abcdefghijklmnopqrstuvwxyz0123456789" {
-        opts.append(KeyOption(label: String(ch), kind: .kbd, expr: "'\(ch)'",
+        opts.append(KeyOption(label: String(ch), kind: .kbd,
+                              code: UInt16(ch.asciiValue!),
                               legend: String(ch).uppercased()))
     }
-    let specials: [(String, String, String)] = [
-        ("Space", "' '", "␣"), ("Enter", "KBD_KEY_RETURN", "⏎"),
-        ("Escape", "KBD_KEY_ESC", "⎋"), ("Tab", "KBD_KEY_TAB", "⇥"),
-        ("Backspace", "KBD_KEY_BACKSPACE", "⌫"), ("Delete", "KBD_KEY_DELETE", "⌦"),
-        ("Up", "KBD_KEY_UP_ARROW", "↑"), ("Down", "KBD_KEY_DOWN_ARROW", "↓"),
-        ("Left", "KBD_KEY_LEFT_ARROW", "←"), ("Right", "KBD_KEY_RIGHT_ARROW", "→"),
-        ("Home", "KBD_KEY_HOME", "↖"), ("End", "KBD_KEY_END", "↘"),
-        ("Page Up", "KBD_KEY_PAGE_UP", "⇞"), ("Page Down", "KBD_KEY_PAGE_DOWN", "⇟"),
+    let specials: [(String, UInt16, String)] = [
+        ("Space", 0x20, "␣"), ("Enter", 0xB0, "⏎"),
+        ("Escape", 0xB1, "⎋"), ("Tab", 0xB3, "⇥"),
+        ("Backspace", 0xB2, "⌫"), ("Delete", 0xD4, "⌦"),
+        ("Up", 0xDA, "↑"), ("Down", 0xD9, "↓"),
+        ("Left", 0xD8, "←"), ("Right", 0xD7, "→"),
+        ("Home", 0xD2, "↖"), ("End", 0xD5, "↘"),
+        ("Page Up", 0xD3, "⇞"), ("Page Down", 0xD6, "⇟"),
     ]
-    for (label, expr, legend) in specials {
-        opts.append(KeyOption(label: label, kind: .kbd, expr: expr, legend: legend))
+    for (label, code, legend) in specials {
+        opts.append(KeyOption(label: label, kind: .kbd, code: code, legend: legend))
     }
     for n in 1...24 {
-        opts.append(KeyOption(label: "F\(n)", kind: .kbd, expr: "KBD_KEY_F\(n)", legend: "F\(n)"))
+        let code: UInt16 = n <= 12 ? 0xC2 + UInt16(n - 1) : 0xF0 + UInt16(n - 13)
+        opts.append(KeyOption(label: "F\(n)", kind: .kbd, code: code, legend: "F\(n)"))
     }
-    let media: [(String, String, String)] = [
-        ("Play/Pause", "0xCD", "⏯"), ("Next Track", "CON_MEDIA_NEXT", "⏭"),
-        ("Previous Track", "CON_MEDIA_PREV", "⏮"), ("Volume Up", "CON_VOL_UP", "VOL+"),
-        ("Volume Down", "CON_VOL_DOWN", "VOL−"), ("Mute", "CON_VOL_MUTE", "MUTE"),
+    let media: [(String, UInt16, String)] = [
+        ("Play/Pause", 0xCD, "⏯"), ("Next Track", 0xB5, "⏭"),
+        ("Previous Track", 0xB6, "⏮"), ("Volume Up", 0xE9, "VOL+"),
+        ("Volume Down", 0xEA, "VOL−"), ("Mute", 0xE2, "MUTE"),
     ]
-    for (label, expr, legend) in media {
-        opts.append(KeyOption(label: label, kind: .con, expr: expr, legend: legend))
+    for (label, code, legend) in media {
+        opts.append(KeyOption(label: label, kind: .con, code: code, legend: legend))
     }
     return opts
 }()
@@ -63,7 +72,15 @@ func keyOption(_ label: String) -> KeyOption {
 enum LedMode: String, CaseIterable, Codable {
     case off, solid, breathe, cycle
 
-    var expr: String { "LED_MODE_" + rawValue.uppercased() }
+    // Matches LED_MODE_* in config.h.
+    var code: UInt8 {
+        switch self {
+        case .off: return 0
+        case .solid: return 1
+        case .breathe: return 2
+        case .cycle: return 3
+        }
+    }
 
     var label: String {
         switch self {
@@ -172,90 +189,104 @@ private let asciiFolds: [Character: String] = [
     "\u{2026}": "...", "\u{00A0}": " ",
 ]
 
-func cString(_ text: String) throws -> String {
+func asciiBytes(_ text: String) throws -> [UInt8] {
     let folded = text.map { asciiFolds[$0] ?? String($0) }.joined()
-    var out = "\""
-    for ch in folded.unicodeScalars {
+    return try folded.unicodeScalars.map { ch in
         switch ch {
-        case "\\": out += "\\\\"
-        case "\"": out += "\\\""
-        case "\n": out += "\\n"
-        case "\t": out += "\\t"
-        case let c where c.value >= 32 && c.value < 127: out.unicodeScalars.append(c)
+        case "\n", "\t": return UInt8(ch.value)
+        case let c where c.value >= 32 && c.value < 127: return UInt8(c.value)
         default: throw KeymapError(message: "only plain ASCII can be typed, not '\(ch)'")
         }
     }
-    return out + "\""
 }
 
-func stepCode(_ step: MacroStep) throws -> String {
+// The blob the flasher patches into the compiled firmware. Layout and step encoding
+// are documented at the top of firmware/keypad.c - keep the two in step, and bump the
+// version byte in the magic if they ever diverge.
+let blobMagic: [UInt8] = Array("BBNKMAP".utf8) + [1]
+let blobSize = 512
+
+private let stepTap: UInt8 = 0, stepTapCon: UInt8 = 1, stepText: UInt8 = 2, stepWait: UInt8 = 3
+private let actHoldKbd: UInt8 = 0, actHoldCon: UInt8 = 1, actSequence: UInt8 = 2
+
+private func little(_ value: UInt16) -> [UInt8] { [UInt8(value & 0xff), UInt8(value >> 8)] }
+
+private func ledBytes(_ led: LedSpec) -> [UInt8] {
+    [led.mode.code, UInt8(level(led.green)), UInt8(level(led.blue))]
+        + little(UInt16(min(max(led.periodMs, 0), 65535)))
+        + [led.lightWhilePressed ? 1 : 0,
+           UInt8(level(led.pressGreen)), UInt8(level(led.pressBlue))]
+}
+
+// One text step carries at most 255 bytes, so a long paste becomes several.
+private func textSteps(_ text: String) throws -> [[UInt8]] {
+    let bytes = try asciiBytes(text)
+    return stride(from: 0, to: bytes.count, by: 255).map { start in
+        let chunk = Array(bytes[start..<min(start + 255, bytes.count)])
+        return [stepText, UInt8(chunk.count)] + chunk
+    }
+}
+
+private func stepBytes(_ step: MacroStep) throws -> [[UInt8]] {
     switch step.kind {
     case .wait:
-        return "DLY_ms(\(Int(step.waitMs)));"
+        return [[stepWait] + little(UInt16(min(max(step.waitMs, 0), 65535)))]
     case .text:
-        return "KBD_print(\(try cString(step.text)));"
+        return try textSteps(step.text)
     case .tap:
         let opt = keyOption(step.keyLabel)
-        if opt.kind == .con { return "CON_type(\(opt.expr));" }
-        let mods = zip(modifiers, step.mods).filter { $0.1 }.map { $0.0.expr }
-        return mods.map { "KBD_press(\($0)); " }.joined()
-            + "KBD_type(\(opt.expr));"
-            + mods.reversed().map { " KBD_release(\($0));" }.joined()
+        return opt.kind == .con
+            ? [[stepTapCon] + little(opt.code)]
+            : [[stepTap, modMask(step.mods), UInt8(opt.code)]]
     }
 }
 
-func macros(_ n: Int, _ spec: KeySpec) throws -> String {
-    if spec.mode == .macro {
-        let body = try spec.steps.map { "  " + (try stepCode($0)) + " \\\n" }.joined()
-        return """
-        #define KEY\(n)_PRESSED()  { \\
-        \(body)}
-        #define KEY\(n)_RELEASED() { }
-
-        """
+func actionBytes(_ spec: KeySpec) throws -> [UInt8] {
+    if spec.mode == .key {
+        let opt = keyOption(spec.keyLabel)
+        return opt.kind == .con
+            ? [actHoldCon] + little(opt.code)
+            : [actHoldKbd, modMask(spec.mods), UInt8(opt.code)]
     }
+    var steps: [[UInt8]] = []
     if spec.mode == .text {
-        let literal = try cString(spec.text)
-        return """
-        #define KEY\(n)_PRESSED()  { KBD_print(\(literal)); }
-        #define KEY\(n)_RELEASED() { }
-
-        """
+        steps = try textSteps(spec.text)
+    } else {
+        for step in spec.steps { steps += try stepBytes(step) }
     }
-    let opt = keyOption(spec.keyLabel)
-    if opt.kind == .con {
-        return """
-        #define KEY\(n)_PRESSED()  { CON_press(\(opt.expr)); }
-        #define KEY\(n)_RELEASED() { CON_release(\(opt.expr)); }
-
-        """
+    guard steps.count <= 255 else {
+        throw KeymapError(message: "a macro can hold at most 255 steps")
     }
-    let mods = zip(modifiers, spec.mods).filter { $0.1 }.map { $0.0.expr }
-    let press = mods.map { "KBD_press(\($0)); " }.joined() + "KBD_press(\(opt.expr));"
-    let release = "KBD_release(\(opt.expr));"
-        + mods.reversed().map { " KBD_release(\($0));" }.joined()
-    return """
-    #define KEY\(n)_PRESSED()  { \(press) }
-    #define KEY\(n)_RELEASED() { \(release) }
-
-    """
+    return [actSequence, UInt8(steps.count)] + steps.flatMap { $0 }
 }
 
-func ledMacros(_ n: Int, _ led: LedSpec) -> String {
-    """
-    #define KEY\(n)_LED_MODE      \(led.mode.expr)
-    #define KEY\(n)_LED_G         \(level(led.green))
-    #define KEY\(n)_LED_B         \(level(led.blue))
-    #define KEY\(n)_LED_PERIOD_MS \(Int(led.periodMs))
-    #define KEY\(n)_LED_PRESS     \(led.lightWhilePressed ? 1 : 0)
-    #define KEY\(n)_LED_PRESS_G   \(level(led.pressGreen))
-    #define KEY\(n)_LED_PRESS_B   \(level(led.pressBlue))
+func keymapBlob(_ spec1: KeySpec, _ spec2: KeySpec) throws -> [UInt8] {
+    let action1 = try actionBytes(spec1)
+    let action2 = try actionBytes(spec2)
+    var blob = blobMagic + ledBytes(spec1.led) + ledBytes(spec2.led)
+    blob += little(UInt16(26 + action1.count)) + action1 + action2
+    guard blob.count <= blobSize else {
+        throw KeymapError(message: "this keymap needs \(blob.count) bytes and the "
+                          + "firmware reserves \(blobSize) - shorten a macro")
+    }
+    return blob + [UInt8](repeating: 0, count: blobSize - blob.count)
+}
 
-    """
+func patchedFirmware(_ image: [UInt8], with blob: [UInt8]) throws -> [UInt8] {
+    let hits = (0...(max(image.count - blobMagic.count, 0)))
+        .filter { Array(image[$0..<($0 + blobMagic.count)]) == blobMagic }
+    guard hits.count == 1, let at = hits.first, at + blobSize <= image.count else {
+        throw KeymapError(message: hits.count > 1
+            ? "the firmware image carries the keymap marker more than once"
+            : "no keymap marker in the firmware image - rebuild with make -C firmware bin")
+    }
+    var patched = image
+    patched.replaceSubrange(at..<(at + blobSize), with: blob)
+    return patched
 }
 
 // The WCH bootloader cannot read flash back, so what is on the pad can never be
-// queried - this sidecar next to keymap.h is the closest thing to remembering it.
+// queried - this sidecar is the closest thing to remembering it.
 //
 // ponytail: one file, so it tracks one pad. Name it per device if you ever want
 // several with different keymaps.
@@ -273,71 +304,98 @@ func loadSpecs(from url: URL) -> [KeySpec]? {
     return specs
 }
 
-func keymapFile(_ spec1: KeySpec, _ spec2: KeySpec) throws -> String {
-    try "// Generated by the BitchBoy Nano flasher - do not edit by hand.\n\n#pragma once\n\n"
-        + macros(1, spec1) + "\n" + macros(2, spec2) + "\n"
-        + ledMacros(1, spec1.led) + "\n" + ledMacros(2, spec2.led)
-}
-
 func runCheck() throws {
     var s1 = KeySpec()
     s1.mods = [true, false, false, true]
     s1.keyLabel = "F13"
-    var s2 = KeySpec(mode: .text)
-    s2.text = "echo \"hi \\ there\"\nsecond line"
-
-    let keymap = try keymapFile(s1, s2)
-    assert(keymap.contains("KBD_press(KBD_KEY_LEFT_CTRL); KBD_press(KBD_KEY_LEFT_GUI); KBD_press(KBD_KEY_F13);"))
-    assert(keymap.contains("KBD_release(KBD_KEY_F13); KBD_release(KBD_KEY_LEFT_GUI); KBD_release(KBD_KEY_LEFT_CTRL);"))
-    assert(keymap.contains("KBD_print(\"echo \\\"hi \\\\ there\\\"\\nsecond line\");"))
+    assert(try! actionBytes(s1) == [0, 0b1001, 0xF0])
     assert(s1.legend == "⌃⌘F13")
-    assert((try? cString("héllo")) == nil, "non-ASCII should be rejected")
-    assert(try! cString("Hi, I\u{2019}m \u{201C}Nano\u{201D} \u{2014} ok\u{2026}")
-        == "\"Hi, I'm \\\"Nano\\\" - ok...\"")
+
+    var media = KeySpec()
+    media.keyLabel = "Volume Up"
+    assert(try! actionBytes(media) == [1, 0xE9, 0x00])
+
+    var s2 = KeySpec(mode: .text)
+    s2.text = "hi\nthere"
+    assert(try! actionBytes(s2)
+        == [2, 1, 2, 8, 104, 105, 10, 116, 104, 101, 114, 101])
 
     var mac = KeySpec(mode: .macro)
     mac.steps = [
         MacroStep(kind: .tap, mods: [false, false, false, true], keyLabel: "Space"),
-        MacroStep(kind: .wait, waitMs: 100),
-        MacroStep(kind: .text, text: "terminal\n"),
-        MacroStep(kind: .wait, waitMs: 250),
+        MacroStep(kind: .wait, waitMs: 300),
+        MacroStep(kind: .text, text: "ok\n"),
         MacroStep(kind: .tap, keyLabel: "Volume Up"),
     ]
-    let macro = try macros(1, mac)
-    assert(macro.contains("KBD_press(KBD_KEY_LEFT_GUI); KBD_type(' '); KBD_release(KBD_KEY_LEFT_GUI); \\\n"))
-    assert(macro.contains("  DLY_ms(100); \\\n"))
-    assert(macro.contains("  KBD_print(\"terminal\\n\"); \\\n"))
-    assert(macro.contains("  CON_type(CON_VOL_UP); \\\n"))
-    assert(macro.contains("#define KEY1_RELEASED() { }"))
-    assert(mac.legend == "▶5")
-    assert(try! macros(2, KeySpec(mode: .macro)).contains("#define KEY2_PRESSED()  { \\\n}"))
+    assert(try! actionBytes(mac)
+        == [2, 4, 0, 0b1000, 0x20, 3, 0x2C, 0x01, 2, 3, 111, 107, 10, 1, 0xE9, 0x00])
+    assert(mac.legend == "▶4")
 
-    var media = KeySpec()
-    media.keyLabel = "Volume Up"
-    assert(try! macros(1, media).contains("CON_press(CON_VOL_UP)"))
+    var long = KeySpec(mode: .text)
+    long.text = String(repeating: "x", count: 300)
+    let split = try actionBytes(long)
+    assert(split[1] == 2 && split[3] == 255 && split[259] == 2 && split[260] == 45)
+
+    assert((try? asciiBytes("héllo")) == nil, "non-ASCII should be rejected")
+    assert(try! asciiBytes("Hi, I\u{2019}m \u{201C}Nano\u{201D} \u{2014} ok\u{2026}")
+        == Array("Hi, I'm \"Nano\" - ok...".utf8))
 
     var lit = KeySpec()
     lit.led = LedSpec(mode: .breathe, green: 1, blue: 0, periodMs: 1500,
                       lightWhilePressed: true, pressGreen: 0, pressBlue: 1)
-    let leds = ledMacros(2, lit.led)
-    assert(leds.contains("#define KEY2_LED_MODE      LED_MODE_BREATHE"))
-    assert(leds.contains("#define KEY2_LED_G         255"))
-    assert(leds.contains("#define KEY2_LED_B         0"))
-    assert(leds.contains("#define KEY2_LED_PERIOD_MS 1500"))
-    assert(leds.contains("#define KEY2_LED_PRESS     1"))
-    assert(leds.contains("#define KEY2_LED_PRESS_B   255"))
+    let blob = try keymapBlob(s1, lit)
+    assert(blob.count == blobSize)
+    assert(Array(blob[0..<8]) == blobMagic)
+    assert(Array(blob[16..<24]) == [2, 255, 0, 0xDC, 0x05, 1, 0, 255])
+    assert(Array(blob[24..<26]) == [29, 0])              // key 2 follows key 1's 3 bytes
+    assert(Array(blob[26..<32]) == [0, 0b1001, 0xF0, 0, 0, 0x61])
     assert(level(0.5) == 128 && level(-1) == 0 && level(2) == 255)
-    assert(ledMacros(1, LedSpec()).contains("#define KEY1_LED_MODE      LED_MODE_OFF"))
+
+    var huge = KeySpec(mode: .text)
+    huge.text = String(repeating: "y", count: 600)
+    assert((try? keymapBlob(huge, huge)) == nil, "an oversized keymap should be refused")
+
+    let image = [UInt8](repeating: 0xAA, count: 100) + blobMagic
+        + [UInt8](repeating: 0, count: blobSize)
+    let patched = try patchedFirmware(image, with: blob)
+    assert(patched.count == image.count)
+    assert(Array(patched[0..<100]) == Array(image[0..<100]))
+    assert(Array(patched[100..<(100 + blobSize)]) == blob)
+    assert((try? patchedFirmware([UInt8](repeating: 0, count: 600), with: blob)) == nil)
+
+    // The blob format is defined twice - here and in keypad.c - so check they agree.
+    let firmwareSource = firmwareImage.deletingLastPathComponent()
+        .appendingPathComponent("keypad.c")
+    if let source = try? String(contentsOf: firmwareSource) {
+        func constant(_ name: String) -> Int? {
+            source.split(separator: "\n")
+                .first { $0.split(separator: " ").dropFirst().first == Substring(name) }
+                .flatMap { Int($0.split(separator: " ").last ?? "") }
+        }
+        assert(constant("BLOB_SIZE") == blobSize)
+        assert(constant("KEY2_ACTION") == 24 && constant("KEY1_ACTION") == 26)
+        assert(constant("ACT_HOLD_KBD") == Int(actHoldKbd)
+               && constant("ACT_HOLD_CON") == Int(actHoldCon)
+               && constant("ACT_SEQUENCE") == Int(actSequence))
+        assert(constant("STEP_TAP") == Int(stepTap)
+               && constant("STEP_TAP_CON") == Int(stepTapCon)
+               && constant("STEP_TEXT") == Int(stepText)
+               && constant("STEP_WAIT") == Int(stepWait))
+    }
+
+    // The firmware that ships alongside must actually carry the marker.
+    if let onDisk = try? Data(contentsOf: firmwareImage) {
+        assert((try? patchedFirmware([UInt8](onDisk), with: blob)) != nil,
+               "firmware/keypad.bin has no keymap marker - rebuild it")
+    }
 
     let roundTrip = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("bbn-check.json")
-    try saveSpecs([s1, lit], to: roundTrip)
+    try saveSpecs([mac, lit], to: roundTrip)
     let back = loadSpecs(from: roundTrip)
-    assert(back?[0].keyLabel == "F13" && back?[0].mods == [true, false, false, true])
+    assert(back?[0].steps.count == 4)
     assert(back?[1].led.mode == .breathe && back?[1].led.periodMs == 1500)
-    try saveSpecs([mac, s2], to: roundTrip)
-    assert(loadSpecs(from: roundTrip)?[0].steps.count == 5)
-    assert(try! keymapFile(loadSpecs(from: roundTrip)![0], s2) == (try! keymapFile(mac, s2)))
+    assert(try! keymapBlob(back![0], back![1]) == (try! keymapBlob(mac, lit)))
     // A keymap.json written before macros existed still loads.
     try Data("""
     [{"keyLabel":"a","mode":"key","mods":[false,false,false,false],"text":"",
@@ -348,9 +406,8 @@ func runCheck() throws {
              "pressBlue":1,"pressGreen":1}}]
     """.utf8).write(to: roundTrip)
     assert(loadSpecs(from: roundTrip)?[1].keyLabel == "b")
-    assert(try! keymapFile(back![0], back![1]) == (try! keymapFile(s1, lit)))
     try? FileManager.default.removeItem(at: roundTrip)
     assert(loadSpecs(from: URL(fileURLWithPath: "/nonexistent/x.json")) == nil)
 
-    print("check OK: keymap generation verified")
+    print("check OK: keymap blob and firmware patching verified")
 }

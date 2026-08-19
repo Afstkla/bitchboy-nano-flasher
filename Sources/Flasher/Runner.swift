@@ -1,23 +1,45 @@
 import Foundation
 
-let repoRoot = URL(fileURLWithPath: #filePath)
+private let checkoutRoot = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()   // Flasher/
     .deletingLastPathComponent()   // Sources/
     .deletingLastPathComponent()   // repo root
-let firmwareDir = repoRoot.appendingPathComponent("firmware")
-let specsFile = firmwareDir.appendingPathComponent("keymap.json")
+
+// Set when running from a .app rather than `swift run`.
+private let bundledRoot: URL? = {
+    guard let res = Bundle.main.resourceURL,
+          FileManager.default.fileExists(
+            atPath: res.appendingPathComponent("firmware/keypad.bin").path)
+    else { return nil }
+    return res
+}()
+
+private let appSupport = FileManager.default
+    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("BitchBoy Nano")
+
+// The base image is only ever read, so it can live inside a signed bundle; only the
+// remembered keymap needs somewhere writable.
+let firmwareImage = (bundledRoot ?? checkoutRoot)
+    .appendingPathComponent("firmware/keypad.bin")
+let specsFile = bundledRoot == nil
+    ? checkoutRoot.appendingPathComponent("firmware/keymap.json")
+    : appSupport.appendingPathComponent("keymap.json")
+
+private let bootloaderTimeout = 120.0
 
 final class Runner: ObservableObject {
     @Published var log = ""
     @Published var running = false
 
-    private var current: Process?
     private var cancelled = false
 
     func flash(_ spec1: KeySpec, _ spec2: KeySpec) {
-        let keymap: String
+        let image: [UInt8]
         do {
-            keymap = try keymapFile(spec1, spec2)
+            let base = try Data(contentsOf: firmwareImage)
+            image = try patchedFirmware([UInt8](base),
+                                        with: try keymapBlob(spec1, spec2))
         } catch {
             append("ERROR: \(error.localizedDescription)\n")
             return
@@ -27,65 +49,50 @@ final class Runner: ObservableObject {
         log = ""
         DispatchQueue.global().async { [self] in
             do {
-                try keymap.write(to: firmwareDir.appendingPathComponent("keymap.h"),
-                                 atomically: true, encoding: .utf8)
+                try? FileManager.default.createDirectory(
+                    at: specsFile.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
                 try saveSpecs([spec1, spec2], to: specsFile)
-                append("Wrote firmware/keymap.h, compiling ...\n")
-                try run(["make", "-C", firmwareDir.path, "bin"],
-                        hint: "make/sdcc not found - run: brew install sdcc")
-                append("\n")
-                try run(["uv", "run", "flash.py"],
-                        hint: "uv not found - install it from https://docs.astral.sh/uv/")
-                append("\nDone! Replug the pad and it comes up with the new keymap.\n")
+
+                append("""
+                Put the pad in bootloader mode:
+                  * running this firmware already: unplug, HOLD BOTH BUTTONS, replug
+                  * stock firmware: bridge pin 12 (UDP) to pin 16 (V33) through 10k
+                    while plugging in, then remove the resistor
+                Waiting for the bootloader ...
+
+                """)
+                append("Patched \(image.count) bytes from \(firmwareImage.path)\n\n")
+                try waitForBootloader()
+                try CH55x(log: { append($0) }).program(image) { append($0) }
+                append("\nDone! The pad restarts with the new keymap.\n")
             } catch {
-                append(cancelled ? "\nCancelled.\n" : "\nFAILED: \(error.localizedDescription)\n")
+                append(cancelled ? "\nCancelled.\n"
+                                 : "\nFAILED: \(error.localizedDescription)\n")
             }
             DispatchQueue.main.async { self.running = false }
         }
     }
 
-    func cancel() {
-        cancelled = true
-        current?.terminate()
-    }
+    func cancel() { cancelled = true }
 
-    private func run(_ cmd: [String], hint: String) throws {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = cmd
-        proc.currentDirectoryURL = repoRoot
-
-        var env = ProcessInfo.processInfo.environment
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        env["PATH"] = "\(env["PATH"] ?? ""):/opt/homebrew/bin:/usr/local/bin:\(home)/.local/bin"
-        env["PYTHONUNBUFFERED"] = "1"
-        proc.environment = env
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                self?.append(text)
+    private func waitForBootloader() throws {
+        let deadline = Date().addingTimeInterval(bootloaderTimeout)
+        while !bootloaderAttached() {
+            if cancelled { throw KeymapError(message: "cancelled") }
+            guard Date() < deadline else {
+                throw KeymapError(message:
+                    "timed out waiting for the bootloader - nothing was flashed")
             }
+            Thread.sleep(forTimeInterval: 0.2)
         }
-
-        current = proc
-        do {
-            try proc.run()
-        } catch {
-            throw KeymapError(message: hint)
-        }
-        proc.waitUntilExit()
-        pipe.fileHandleForReading.readabilityHandler = nil
-        current = nil
-        if proc.terminationStatus != 0 {
-            throw KeymapError(message: "\(cmd[0]) exited \(proc.terminationStatus)")
-        }
+        // The interface nub is published a moment after the device attaches.
+        Thread.sleep(forTimeInterval: 0.3)
     }
 
+    // Mirrored to stdout so a run started from a terminal leaves a log behind.
     private func append(_ text: String) {
+        print(text, terminator: "")
         DispatchQueue.main.async { self.log += text }
     }
 }

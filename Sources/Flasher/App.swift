@@ -3,6 +3,7 @@ import SwiftUI
 @main
 enum Main {
     static func main() throws {
+        setvbuf(stdout, nil, _IONBF, 0)     // unbuffered, so a redirected log is live
         if CommandLine.arguments.contains("--check") {
             try runCheck()
         } else {
@@ -80,18 +81,21 @@ struct ContentView: View {
     private var themeSwitch: some View {
         HStack(spacing: 2) {
             ForEach(Theme.all, id: \.name) { t in
-                Button(t.name) { themeName = t.name }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(themeName == t.name
-                                ? AnyShapeStyle(theme.accent)
-                                : AnyShapeStyle(.clear))
-                    .foregroundStyle(themeName == t.name
-                                     ? (theme.win95 ? .white : theme.surface)
-                                     : (theme.win95 ? .white.opacity(0.7) : theme.dim))
-                    .clipShape(RoundedRectangle(cornerRadius: theme.radius / 2))
+                Button { themeName = t.name } label: {
+                    Text(t.name)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(themeName == t.name
+                                    ? AnyShapeStyle(theme.accent)
+                                    : AnyShapeStyle(.clear))
+                        .foregroundStyle(themeName == t.name
+                                         ? (theme.win95 ? .white : theme.surface)
+                                         : (theme.win95 ? .white.opacity(0.7) : theme.dim))
+                        .clipShape(RoundedRectangle(cornerRadius: theme.radius / 2))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.trailing, 8)
@@ -117,13 +121,14 @@ struct ContentView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: runner.running ? "xmark" : "bolt.fill")
-                Text(runner.running ? "Cancel" : "Build & Flash")
+                Text(runner.running ? "Cancel" : "Flash")
             }
             .font(.system(size: 14, weight: .bold,
                           design: theme.win95 ? .monospaced : .default))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 11)
             .foregroundStyle(runner.running ? theme.dim : theme.buttonText)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .modifier(FlashButtonBackground(theme: theme, running: runner.running))
@@ -258,13 +263,16 @@ struct ConfigPanel: View {
             }
             HStack(spacing: 6) {
                 ForEach(StepKind.allCases, id: \.self) { kind in
-                    Button("+ " + kind.label) { spec.steps.append(MacroStep(kind: kind)) }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(togglesBackground(active: false, theme: theme))
-                        .foregroundStyle(theme.dim)
+                    Button { spec.steps.append(MacroStep(kind: kind)) } label: {
+                        Text("+ " + kind.label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(togglesBackground(active: false, theme: theme))
+                            .foregroundStyle(theme.dim)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
                 Spacer()
                 recordButton
@@ -507,22 +515,25 @@ struct Segment: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(options.indices, id: \.self) { i in
-                Button(options[i]) { index = i }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: index == i ? .bold : .regular,
-                                  design: theme.win95 ? .monospaced : .default))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        index == i
-                        ? AnyView(theme.win95
-                                  ? AnyView(theme.capTop.modifier(Bevel(raised: false)))
-                                  : AnyView(RoundedRectangle(cornerRadius: theme.radius - 2)
-                                      .fill(theme.accent)))
-                        : AnyView(Color.clear))
-                    .foregroundStyle(index == i
-                                     ? (theme.win95 ? theme.text : theme.buttonText)
-                                     : theme.dim)
+                Button { index = i } label: {
+                    Text(options[i])
+                        .font(.system(size: 12, weight: index == i ? .bold : .regular,
+                                      design: theme.win95 ? .monospaced : .default))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            index == i
+                            ? AnyView(theme.win95
+                                      ? AnyView(theme.capTop.modifier(Bevel(raised: false)))
+                                      : AnyView(RoundedRectangle(cornerRadius: theme.radius - 2)
+                                          .fill(theme.accent)))
+                            : AnyView(Color.clear))
+                        .foregroundStyle(index == i
+                                         ? (theme.win95 ? theme.text : theme.buttonText)
+                                         : theme.dim)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             Spacer()
         }
