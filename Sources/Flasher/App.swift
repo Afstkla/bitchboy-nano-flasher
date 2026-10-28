@@ -27,8 +27,9 @@ struct FlasherApp: App {
 
 struct ContentView: View {
     @State private var specs = loadSpecs(from: specsFile)
-        ?? [KeySpec(), KeySpec(keyLabel: "b")]
+        ?? [KeySpec(), KeySpec(keyLabel: "b", midiSpec: MidiSpec(number: 62))]
     @State private var selected = 0
+    @AppStorage("midi") private var midi = true
     @StateObject private var runner = Runner()
     @AppStorage("theme") private var themeName = "NANO"
 
@@ -39,8 +40,15 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: theme.win95 ? 12 : 18) {
             header
+            Segment(options: ["MIDI", "Keyboard"],
+                    index: Binding(get: { midi ? 0 : 1 }, set: { midi = $0 == 0 }),
+                    theme: theme)
             pad
-            ConfigPanel(spec: $specs[selected], theme: theme)
+            if midi {
+                MidiPanel(midi: $specs[selected].midi, theme: theme)
+            } else {
+                ConfigPanel(spec: $specs[selected], theme: theme)
+            }
             LedPanel(led: $specs[selected].led, theme: theme)
             flashButton
             console
@@ -105,19 +113,23 @@ struct ContentView: View {
         if theme.win95 {
             HStack(spacing: 16) {
                 ForEach(0..<2) { i in
-                    Keycap(legend: specs[i].legend, index: i,
+                    Keycap(legend: legends[i], index: i,
                            isSelected: selected == i, theme: theme)
                         .onTapGesture { selected = i }
                 }
             }
         } else {
-            NanoPad(specs: specs, selected: $selected, theme: theme)
+            NanoPad(legends: legends, selected: $selected, theme: theme)
         }
+    }
+
+    private var legends: [String] {
+        specs.map { midi ? $0.midi.legend : $0.legend }
     }
 
     private var flashButton: some View {
         Button {
-            runner.running ? runner.cancel() : runner.flash(specs[0], specs[1])
+            runner.running ? runner.cancel() : runner.flash(specs[0], specs[1], midi: midi)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: runner.running ? "xmark" : "bolt.fill")
@@ -314,6 +326,50 @@ struct ConfigPanel: View {
         }
         .buttonStyle(.plain)
         .help("Record from your keyboard")
+    }
+}
+
+struct MidiPanel: View {
+    @Binding var midi: MidiSpec
+    let theme: Theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Segment(options: ["Note", "Control change"],
+                    index: Binding(get: { midi.cc ? 1 : 0 }, set: { midi.cc = $0 == 1 }),
+                    theme: theme)
+
+            HStack(spacing: 8) {
+                TextField("", value: $midi.number, format: .number)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(theme.fieldText)
+                    .padding(.horizontal, 6)
+                    .frame(width: 48, height: 26)
+                    .fieldBackground(theme)
+                Stepper("", value: $midi.number, in: 0...127)
+                    .labelsHidden()
+                Text(midi.cc ? "controller" : noteName(min(max(midi.number, 0), 127)))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(theme.fieldText)
+                Spacer()
+                Text("Channel")
+                    .font(.system(size: 10))
+                    .foregroundStyle(theme.dim)
+                Dropdown(options: (1...16).map(String.init),
+                         selection: Binding(get: { String(midi.channel) },
+                                            set: { midi.channel = Int($0) ?? 1 }),
+                         theme: theme, width: 56)
+            }
+
+            Text(midi.cc
+                 ? "127 on press, 0 on release · 64 is sustain, if you want a footswitch"
+                 : "Note on at velocity 127 while held · note off on release")
+                .font(.system(size: 10))
+                .foregroundStyle(theme.dim)
+        }
+        .padding(14)
+        .panelStyle(theme)
     }
 }
 

@@ -146,6 +146,21 @@ struct MacroStep: Codable {
     var waitMs: Double = 100
 }
 
+// One key in MIDI mode: a note held for as long as the key is, or a control change
+// that goes to 127 on press and back to 0 on release.
+struct MidiSpec: Codable {
+    var cc = false
+    var number = 60
+    var channel = 1
+
+    var legend: String { cc ? "CC\(number)" : noteName(number) }
+}
+
+func noteName(_ number: Int) -> String {
+    let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
+    return names[number % 12] + String(number / 12 - 1)
+}
+
 struct KeySpec: Codable {
     var mode: KeySpecMode = .key
     var mods: [Bool] = [false, false, false, false]
@@ -159,6 +174,13 @@ struct KeySpec: Codable {
     var steps: [MacroStep] {
         get { macroSteps ?? [] }
         set { macroSteps = newValue }
+    }
+
+    // Absent from keymap.json files written before MIDI mode, for the same reason.
+    var midiSpec: MidiSpec?
+    var midi: MidiSpec {
+        get { midiSpec ?? MidiSpec() }
+        set { midiSpec = newValue }
     }
 
     var legend: String {
@@ -203,11 +225,11 @@ func asciiBytes(_ text: String) throws -> [UInt8] {
 // The blob the flasher patches into the compiled firmware. Layout and step encoding
 // are documented at the top of firmware/keypad.c - keep the two in step, and bump the
 // version byte in the magic if they ever diverge.
-let blobMagic: [UInt8] = Array("BBNKMAP".utf8) + [1]
+let blobMagic: [UInt8] = Array("BBNKMAP".utf8) + [2]
 let blobSize = 512
 
 private let stepTap: UInt8 = 0, stepTapCon: UInt8 = 1, stepText: UInt8 = 2, stepWait: UInt8 = 3
-private let actHoldKbd: UInt8 = 0, actHoldCon: UInt8 = 1, actSequence: UInt8 = 2
+private let actHoldKbd: UInt8 = 0, actHoldCon: UInt8 = 1, actSequence: UInt8 = 2, actMidi: UInt8 = 3
 
 private func little(_ value: UInt16) -> [UInt8] { [UInt8(value & 0xff), UInt8(value >> 8)] }
 
@@ -260,9 +282,16 @@ func actionBytes(_ spec: KeySpec) throws -> [UInt8] {
     return [actSequence, UInt8(steps.count)] + steps.flatMap { $0 }
 }
 
-func keymapBlob(_ spec1: KeySpec, _ spec2: KeySpec) throws -> [UInt8] {
-    let action1 = try actionBytes(spec1)
-    let action2 = try actionBytes(spec2)
+func midiBytes(_ midi: MidiSpec) -> [UInt8] {
+    let channel = UInt8(min(max(midi.channel, 1), 16) - 1)
+    return [actMidi, (midi.cc ? 0xB0 : 0x90) | channel, UInt8(min(max(midi.number, 0), 127))]
+}
+
+// In MIDI mode the firmware enumerates as a MIDI device instead of a keyboard - it
+// tells the two apart by key 1's action.
+func keymapBlob(_ spec1: KeySpec, _ spec2: KeySpec, midi: Bool = false) throws -> [UInt8] {
+    let action1 = midi ? midiBytes(spec1.midi) : try actionBytes(spec1)
+    let action2 = midi ? midiBytes(spec2.midi) : try actionBytes(spec2)
     var blob = blobMagic + ledBytes(spec1.led) + ledBytes(spec2.led)
     blob += little(UInt16(26 + action1.count)) + action1 + action2
     guard blob.count <= blobSize else {
@@ -351,6 +380,16 @@ func runCheck() throws {
     assert(Array(blob[26..<32]) == [0, 0b1001, 0xF0, 0, 0, 0x61])
     assert(level(0.5) == 128 && level(-1) == 0 && level(2) == 255)
 
+    var drum = KeySpec()
+    drum.midi = MidiSpec(cc: false, number: 36, channel: 10)
+    var pedal = KeySpec()
+    pedal.midi = MidiSpec(cc: true, number: 64, channel: 1)
+    assert(midiBytes(drum.midi) == [3, 0x99, 36] && midiBytes(pedal.midi) == [3, 0xB0, 64])
+    assert(midiBytes(MidiSpec(number: 300, channel: 0)) == [3, 0x90, 127])
+    assert(drum.midi.legend == "C2" && pedal.midi.legend == "CC64" && noteName(61) == "C♯4")
+    let midiBlob = try keymapBlob(drum, pedal, midi: true)
+    assert(Array(midiBlob[24..<32]) == [29, 0, 3, 0x99, 36, 3, 0xB0, 64])
+
     var huge = KeySpec(mode: .text)
     huge.text = String(repeating: "y", count: 600)
     assert((try? keymapBlob(huge, huge)) == nil, "an oversized keymap should be refused")
@@ -376,7 +415,8 @@ func runCheck() throws {
         assert(constant("KEY2_ACTION") == 24 && constant("KEY1_ACTION") == 26)
         assert(constant("ACT_HOLD_KBD") == Int(actHoldKbd)
                && constant("ACT_HOLD_CON") == Int(actHoldCon)
-               && constant("ACT_SEQUENCE") == Int(actSequence))
+               && constant("ACT_SEQUENCE") == Int(actSequence)
+               && constant("ACT_MIDI") == Int(actMidi))
         assert(constant("STEP_TAP") == Int(stepTap)
                && constant("STEP_TAP_CON") == Int(stepTapCon)
                && constant("STEP_TEXT") == Int(stepText)
@@ -406,6 +446,7 @@ func runCheck() throws {
              "pressBlue":1,"pressGreen":1}}]
     """.utf8).write(to: roundTrip)
     assert(loadSpecs(from: roundTrip)?[1].keyLabel == "b")
+    assert(loadSpecs(from: roundTrip)?[1].midi.number == 60)
     try? FileManager.default.removeItem(at: roundTrip)
     assert(loadSpecs(from: URL(fileURLWithPath: "/nonexistent/x.json")) == nil)
 

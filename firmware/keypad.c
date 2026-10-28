@@ -3,8 +3,9 @@
 // License:   http://creativecommons.org/licenses/by-sa/3.0/
 // ===================================================================================
 //
-// Turns a cheap CH552-based 2-key macropad into a plain USB HID keyboard. What each
-// key sends, and how its LED behaves, is *data*: the flasher patches a blob into the
+// Turns a cheap CH552-based 2-key macropad into a class-compliant USB-MIDI device or
+// a plain USB HID keyboard. Which one, what each key sends, and how its LED behaves,
+// is *data*: the flasher patches a blob into the
 // compiled image rather than regenerating a header, so the app needs no C compiler.
 //
 // Blob layout, little-endian, all offsets from the start of KEYMAP:
@@ -20,6 +21,11 @@
 //   0 hold kbd   mods, keycode          held down for as long as the key is
 //   1 hold con   code_lo, code_hi       ditto, for a consumer/media key
 //   2 sequence   count, then steps      run once per press
+//   3 midi       status, number         127 on press, 0 on release
+//
+// If key 1's action is midi, the pad enumerates as a USB-MIDI device instead of a
+// keyboard, and both actions are midi. A midi status is a note-on or a control
+// change; a note-on with value 0 is a note-off, per the MIDI spec.
 //
 // A step is a kind byte plus its payload:
 //
@@ -38,6 +44,7 @@
 #include "delay.h"
 #include "gpio.h"
 #include "usb_conkbd.h"
+#include "usb_descr.h"
 
 void USB_interrupt(void);
 void USB_ISR(void) __interrupt(INT_NO_USB) {
@@ -52,6 +59,7 @@ void USB_ISR(void) __interrupt(INT_NO_USB) {
 #define ACT_HOLD_KBD  0
 #define ACT_HOLD_CON  1
 #define ACT_SEQUENCE  2
+#define ACT_MIDI      3
 
 #define STEP_TAP      0
 #define STEP_TAP_CON  1
@@ -60,7 +68,7 @@ void USB_ISR(void) __interrupt(INT_NO_USB) {
 
 // The flasher finds this by its magic and overwrites it. Unpatched, every action is
 // mode 0 with keycode 0, which does nothing.
-__code const uint8_t KEYMAP[BLOB_SIZE] = { 'B', 'B', 'N', 'K', 'M', 'A', 'P', 1 };
+__code const uint8_t KEYMAP[BLOB_SIZE] = { 'B', 'B', 'N', 'K', 'M', 'A', 'P', 2 };
 
 __code const uint8_t MOD_KEYS[4] = {
   KBD_KEY_LEFT_CTRL, KBD_KEY_LEFT_ALT, KBD_KEY_LEFT_SHIFT, KBD_KEY_LEFT_GUI
@@ -191,7 +199,9 @@ static void action(uint16_t at, __bit down) {
   uint8_t mode = KEYMAP[at];
   uint8_t mask, code;
 
-  if(mode == ACT_HOLD_KBD) {
+  if(mode == ACT_MIDI) {
+    MIDI_send(KEYMAP[at + 1], KEYMAP[at + 2], down ? 127 : 0);
+  } else if(mode == ACT_HOLD_KBD) {
     mask = KEYMAP[at + 1];
     code = KEYMAP[at + 2];
     if(down) {
@@ -226,6 +236,7 @@ void main(void) {
   LED_load(0);
   LED_load(1);
 
+  USB_midi = KEYMAP[KEY1_ACTION] == ACT_MIDI;
   KBD_init();
   LED_init();
   DLY_ms(10);

@@ -7,6 +7,7 @@
 #include "usb_hid.h"
 #include "usb_descr.h"
 #include "usb_handler.h"
+#include "delay.h"
 
 // ===================================================================================
 // Variables and Defines
@@ -32,6 +33,26 @@ void HID_sendReport(__xdata uint8_t* buf, uint8_t len) {
   UEP1_T_LEN = len;                                         // set length to upload
   HID_EP1_writeBusyFlag = 1;                                // set busy flag
   UEP1_CTRL = UEP1_CTRL & ~MASK_UEP_T_RES | UEP_T_RES_ACK;  // upload data and respond ACK
+}
+
+// Send one MIDI message as a USB-MIDI event packet. MIDI mode reuses EP1, so this
+// shares the busy flag with the HID reports. Unlike a HID report it gives up after
+// ~50ms: the host is meant to drain the bulk endpoint, but if nothing does, dropping
+// a note beats wedging the whole firmware.
+extern uint8_t UsbConfig;
+
+void MIDI_send(uint8_t status, uint8_t data1, uint8_t data2) {
+  uint16_t timeout = 5000;                                  // x 10us
+  if(!UsbConfig) return;                                    // not enumerated yet
+  while(HID_EP1_writeBusyFlag && timeout) { DLY_us(10); timeout--; }
+  if(HID_EP1_writeBusyFlag) return;
+  EP1_buffer[0] = status >> 4;                              // cable 0 + code index
+  EP1_buffer[1] = status;
+  EP1_buffer[2] = data1;
+  EP1_buffer[3] = data2;
+  UEP1_T_LEN = 4;
+  HID_EP1_writeBusyFlag = 1;
+  UEP1_CTRL = UEP1_CTRL & ~MASK_UEP_T_RES | UEP_T_RES_ACK;
 }
 
 // ===================================================================================

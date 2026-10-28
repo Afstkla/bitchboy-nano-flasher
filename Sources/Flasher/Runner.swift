@@ -34,12 +34,12 @@ final class Runner: ObservableObject {
 
     private var cancelled = false
 
-    func flash(_ spec1: KeySpec, _ spec2: KeySpec) {
+    func flash(_ spec1: KeySpec, _ spec2: KeySpec, midi: Bool) {
         let image: [UInt8]
         do {
             let base = try Data(contentsOf: firmwareImage)
             image = try patchedFirmware([UInt8](base),
-                                        with: try keymapBlob(spec1, spec2))
+                                        with: try keymapBlob(spec1, spec2, midi: midi))
         } catch {
             append("ERROR: \(error.localizedDescription)\n")
             return

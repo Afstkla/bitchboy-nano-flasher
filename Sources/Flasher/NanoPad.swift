@@ -27,7 +27,7 @@ struct GraphGrid: View {
 // The pad drawn as on bitchboynano.afstkla.nl: dark enclosure, light keycaps,
 // USB notch, and technical-drawing dimension lines with the real size in mm.
 struct NanoPad: View {
-    let specs: [KeySpec]
+    let legends: [String]
     @Binding var selected: Int
     let theme: Theme
 
@@ -53,7 +53,7 @@ struct NanoPad: View {
             VStack(spacing: 12) {
                 HStack(spacing: 18) {
                     ForEach(0..<2) { i in
-                        NanoKeycap(legend: specs[i].legend, number: i + 1,
+                        NanoKeycap(legend: legends[i], number: i + 1,
                                    isSelected: selected == i, theme: theme)
                             .onTapGesture { selected = i }
                     }

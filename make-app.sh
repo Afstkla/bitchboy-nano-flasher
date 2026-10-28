@@ -6,11 +6,13 @@
 #     --apple-id you@example.com --team-id B5D2ACYWRR --password abcd-efgh-ijkl-mnop
 #
 # Skip notarization (local testing) with: ./make-app.sh --no-notarize
+# The release workflow sets VERSION from the tag.
 set -euo pipefail
 
 IDENTITY="Developer ID Application: Meneer de Baas B.V. (B5D2ACYWRR)"
 PROFILE="bitchboy"
 APP="build/BitchBoy Nano.app"
+VERSION="${VERSION:-1.0}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
@@ -19,11 +21,12 @@ swift run --quiet Flasher --check
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/firmware"
-cp .build/apple/Products/Release/Flasher "$APP/Contents/MacOS/Flasher"
+cp "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/Flasher" \
+  "$APP/Contents/MacOS/Flasher"
 cp AppIcon.icns "$APP/Contents/Resources/"
 cp firmware/keypad.bin "$APP/Contents/Resources/firmware/"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -34,8 +37,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key>         <string>Flasher</string>
   <key>CFBundleIconFile</key>           <string>AppIcon</string>
   <key>CFBundlePackageType</key>        <string>APPL</string>
-  <key>CFBundleShortVersionString</key> <string>1.0</string>
-  <key>CFBundleVersion</key>            <string>1</string>
+  <key>CFBundleShortVersionString</key> <string>$VERSION</string>
+  <key>CFBundleVersion</key>            <string>$VERSION</string>
   <key>LSMinimumSystemVersion</key>     <string>13.0</string>
   <key>LSApplicationCategoryType</key>  <string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key>    <true/>

@@ -72,7 +72,7 @@ __code USB_CFG_DESCR_HID CfgDescr = {
     .bDescriptorType    = USB_DESCR_TYP_ENDP,     // endpoint descriptor: 0x05
     .bEndpointAddress   = USB_ENDP_ADDR_EP1_IN,   // endpoint: 1, direction: IN (0x01)
     .bmAttributes       = USB_ENDP_TYPE_INTER,    // transfer type: interrupt (0x03)
-    .wMaxPacketSize     = EP1_SIZE,               // max packet size
+    .wMaxPacketSize     = HID_EP_SIZE,            // max packet size
     .bInterval          = 10                      // polling intervall in ms
   },
 
@@ -82,9 +82,63 @@ __code USB_CFG_DESCR_HID CfgDescr = {
     .bDescriptorType    = USB_DESCR_TYP_ENDP,     // endpoint descriptor: 0x05
     .bEndpointAddress   = USB_ENDP_ADDR_EP2_OUT,  // endpoint: 1, direction: IN (0x82)
     .bmAttributes       = USB_ENDP_TYPE_INTER,    // transfer type: interrupt (0x03)
-    .wMaxPacketSize     = EP2_SIZE,               // max packet size
+    .wMaxPacketSize     = HID_EP_SIZE,            // max packet size
     .bInterval          = 10                      // polling intervall in ms
   }
+};
+
+// ===================================================================================
+// MIDI Configuration Descriptor
+// ===================================================================================
+// From chrisssstos/2button-pad-hack, which has it field-tested; see the USB-MIDI 1.0
+// spec, Appendix B, for what each byte means.
+__bit USB_midi;
+
+__code USB_CFG_DESCR_MIDI MidiCfgDescr = {
+  .config = {
+    .bLength            = sizeof(USB_CFG_DESCR),
+    .bDescriptorType    = USB_DESCR_TYP_CONFIG,
+    .wTotalLength       = sizeof(MidiCfgDescr),   // 101
+    .bNumInterfaces     = 2,                      // AudioControl + MIDIStreaming
+    .bConfigurationValue= 1,
+    .iConfiguration     = 0,
+    .bmAttributes       = 0x80,
+    .MaxPower           = USB_MAX_POWER_mA / 2
+  },
+  .interfaceAC = {
+    .bLength            = sizeof(USB_ITF_DESCR),
+    .bDescriptorType    = USB_DESCR_TYP_INTERF,
+    .bInterfaceNumber   = 0,
+    .bAlternateSetting  = 0,
+    .bNumEndpoints      = 0,
+    .bInterfaceClass    = USB_DEV_CLASS_AUDIO,
+    .bInterfaceSubClass = 0x01,                   // AudioControl
+    .bInterfaceProtocol = 0,
+    .iInterface         = 0
+  },
+  .acHeader   = { 0x09, 0x24, 0x01, 0x00, 0x01, 0x09, 0x00, 0x01, 0x01 },
+  .interfaceMS = {
+    .bLength            = sizeof(USB_ITF_DESCR),
+    .bDescriptorType    = USB_DESCR_TYP_INTERF,
+    .bInterfaceNumber   = 1,
+    .bAlternateSetting  = 0,
+    .bNumEndpoints      = 2,
+    .bInterfaceClass    = USB_DEV_CLASS_AUDIO,
+    .bInterfaceSubClass = 0x03,                   // MIDIStreaming
+    .bInterfaceProtocol = 0,
+    .iInterface         = 2                       // the product name
+  },
+  .msHeader   = { 0x07, 0x24, 0x01, 0x00, 0x01, 0x41, 0x00 },
+  .inJackEmb  = { 0x06, 0x24, 0x02, 0x01, 0x01, 0x00 },
+  .inJackExt  = { 0x06, 0x24, 0x02, 0x02, 0x02, 0x00 },
+  .outJackEmb = { 0x09, 0x24, 0x03, 0x01, 0x03, 0x01, 0x02, 0x01, 0x00 },
+  .outJackExt = { 0x09, 0x24, 0x03, 0x02, 0x04, 0x01, 0x01, 0x01, 0x00 },
+  .epOut      = { 0x09, USB_DESCR_TYP_ENDP, USB_ENDP_ADDR_EP2_OUT, USB_ENDP_TYPE_BULK,
+                  EP2_SIZE, 0x00, 0x00, 0x00, 0x00 },
+  .epOutMS    = { 0x05, 0x25, 0x01, 0x01, 0x01 },
+  .epIn       = { 0x09, USB_DESCR_TYP_ENDP, USB_ENDP_ADDR_EP1_IN, USB_ENDP_TYPE_BULK,
+                  EP1_SIZE, 0x00, 0x00, 0x00, 0x00 },
+  .epInMS     = { 0x05, 0x25, 0x01, 0x01, 0x03 }
 };
 
 // ===================================================================================
